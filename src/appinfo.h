@@ -24,6 +24,7 @@ struct UacInfo {
     QString commandLine;    // pkexec command line, if any
     QList<UacUser> users;   // accounts that may authenticate
     int selectedUser = 0;
+    bool consent = false;   // true = just Yes/No, no password (see scripts/enable-no-password.sh)
 };
 
 // Builds a UacInfo from a polkit request. `details` are polkit's key/value

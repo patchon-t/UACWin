@@ -1,8 +1,10 @@
 #include "agent.h"
+#include "sound.h"
 
 #include <PolkitQt1/Details>
 
 #include <QDebug>
+#include <QFile>
 
 #include <pwd.h>
 #include <unistd.h>
@@ -25,6 +27,20 @@ QString userNameOf(const PolkitQt1::Identity &identity)
             return QString::fromLocal8Bit(pw->pw_name);
     }
     return v;
+}
+
+// Yes/No-only mode is on when scripts/enable-no-password.sh added its PAM
+// rule (or UACWIN_MODE=consent). Without that rule PAM would still ask for a
+// password, so the prompt falls back to showing the password box.
+bool consentEnabled()
+{
+    const QString mode = qEnvironmentVariable("UACWIN_MODE");
+    if (mode == QLatin1String("password"))
+        return false;
+    if (mode == QLatin1String("consent"))
+        return true;
+    QFile pam(QStringLiteral("/etc/pam.d/polkit-1"));
+    return pam.open(QIODevice::ReadOnly) && pam.readAll().contains("# uacwin-consent begin");
 }
 
 QString currentUserName()
@@ -85,6 +101,7 @@ void UacAgent::initiateAuthentication(const QString &actionId,
         info.users << lookupUser(name);
     }
     info.selectedUser = m_selected;
+    info.consent = consentEnabled();
 
     if (m_identities.isEmpty()) {
         qWarning() << "uacwin: no usable identity for" << actionId;
@@ -101,6 +118,8 @@ void UacAgent::initiateAuthentication(const QString &actionId,
     connect(card, &UacCard::accepted, this, [this](const QString &response) {
         if (m_session)
             m_session->setResponse(response);
+        else
+            startSession(); // Yes in Yes/No-only mode: now ask polkit
     });
     connect(card, &UacCard::rejected, this, [this] {
         stopSession();
@@ -112,11 +131,14 @@ void UacAgent::initiateAuthentication(const QString &actionId,
         m_selected = index;
         m_failures = 0;
         stopSession();
-        startSession();
+        if (!m_prompt->card()->isConsent())
+            startSession();
     });
 
     m_prompt->show();
-    startSession();
+    UacSound::playPromptSound();
+    if (!info.consent)
+        startSession();
 }
 
 bool UacAgent::initiateAuthenticationFinish()
@@ -139,7 +161,7 @@ void UacAgent::startSession()
 
     connect(m_session, &Session::request, this, [this](const QString &prompt, bool echo) {
         if (m_prompt)
-            m_prompt->card()->setPrompt(prompt, echo);
+            m_prompt->card()->requirePassword(prompt, echo);
     });
     connect(m_session, &Session::showError, this, [this](const QString &text) {
         if (m_prompt)
@@ -183,6 +205,14 @@ void UacAgent::onCompleted(bool gainedAuthorization)
     if (m_failures >= 3) {
         finish();
         return;
+    }
+    if (m_prompt && m_prompt->card()->isConsent()) {
+        // PAM refused without asking for anything (e.g. you are not in the admin group).
+        UacCard *card = m_prompt->card();
+        card->setError(QStringLiteral("Your account is not allowed to approve this."));
+        card->setBusy(false);
+        card->shake();
+        return; // clicking Yes again retries
     }
     if (m_prompt) {
         UacCard *card = m_prompt->card();

@@ -14,6 +14,17 @@ PREFIX="${PREFIX:-/usr/local}"
 echo "==> Stopping UACWin"
 systemctl --user disable --now uacwin-agent.service >/dev/null 2>&1 || true
 
+# KDE's own agent starts the password check immediately, so with the
+# no-password rule still in place it would approve without any click.
+if [[ -f /etc/pam.d/polkit-1 ]] && grep -q "^# uacwin-consent begin" /etc/pam.d/polkit-1; then
+    echo "==> Turning off Yes/No-only mode (needs sudo)"
+    "$(dirname "$0")/disable-no-password.sh" || {
+        echo "Could not remove the no-password rule from /etc/pam.d/polkit-1." >&2
+        echo "Keeping UACWin's agent stopped but NOT restoring KDE's agent." >&2
+        exit 1
+    }
+fi
+
 echo "==> Restoring KDE's polkit agent"
 systemctl --user unmask plasma-polkit-agent.service >/dev/null 2>&1 || true
 for f in "$HOME"/.config/autostart/polkit-kde-authentication-agent-1.desktop \

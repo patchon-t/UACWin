@@ -34,6 +34,9 @@ public:
     UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent = nullptr);
 
     void setPrompt(const QString &prompt, bool echo);
+    // Shows the password box (switches out of Yes/No-only mode if needed).
+    void requirePassword(const QString &prompt, bool echo);
+    bool isConsent() const { return m_consent; }
     void setError(const QString &text);
     void setInfo(const QString &text);
     void setBusy(bool busy);
@@ -61,6 +64,7 @@ private:
     QWidget *m_band = nullptr;
     QWidget *m_footer = nullptr;
     QWidget *m_details = nullptr;
+    QWidget *m_creds = nullptr;
     QLabel *m_detailsLink = nullptr;
     QLabel *m_avatar = nullptr;
     QLabel *m_userName = nullptr;
@@ -73,6 +77,7 @@ private:
     QVariantAnimation *m_shake = nullptr;
     bool m_busy = false;
     bool m_expanded = false;
+    bool m_consent = false;
 };
 
 // Full-screen dimmed backdrop (one per monitor) that hosts the card,
