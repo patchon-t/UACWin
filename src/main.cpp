@@ -1,4 +1,5 @@
 #include "agent.h"
+#include "sound.h"
 #include "uacprompt.h"
 
 #include <PolkitQt1/Subject>
@@ -8,6 +9,7 @@
 #include <QDebug>
 #include <QDir>
 
+#include <cstdio>
 #include <unistd.h>
 
 namespace {
@@ -56,8 +58,10 @@ int main(int argc, char **argv)
     QCommandLineOption verified(QStringLiteral("verified"), QStringLiteral("With --preview/--grab: use the verified-publisher (blue) look."));
     QCommandLineOption grab(QStringLiteral("grab"), QStringLiteral("Render a sample prompt to an image file and exit."), QStringLiteral("file"));
     QCommandLineOption theme(QStringLiteral("theme"), QStringLiteral("Force 'dark' or 'light' (default: follow KDE)."), QStringLiteral("name"));
+    QCommandLineOption consent(QStringLiteral("consent"), QStringLiteral("With --preview/--grab: Yes/No only, no password box."));
+    QCommandLineOption whichSound(QStringLiteral("which-sound"), QStringLiteral("Print the sound file the prompt would play and exit."));
     QCommandLineOption noDim(QStringLiteral("no-dim"), QStringLiteral("Do not dim the screen behind the prompt."));
-    parser.addOptions({preview, verified, grab, theme, noDim});
+    parser.addOptions({preview, verified, grab, theme, consent, whichSound, noDim});
     parser.process(app);
 
     QString themeName = parser.value(theme);
@@ -66,15 +70,25 @@ int main(int argc, char **argv)
     const UacTheme uacTheme = UacTheme::detect(themeName);
     const bool dim = !parser.isSet(noDim) && qgetenv("UACWIN_NO_DIM").isEmpty();
 
+    if (parser.isSet(whichSound)) {
+        const QString f = UacSound::resolvePromptSound();
+        printf("%s\n", f.isEmpty() ? "(no sound)" : qPrintable(f));
+        return 0;
+    }
+
+    UacInfo sample = sampleInfo(parser.isSet(verified));
+    sample.consent = parser.isSet(consent);
+
     if (parser.isSet(grab)) {
-        const QImage img = UacPrompt::renderPreview(sampleInfo(parser.isSet(verified)), uacTheme, QSize(900, 680));
+        const QImage img = UacPrompt::renderPreview(sample, uacTheme, QSize(900, 680));
         return img.save(parser.value(grab)) ? 0 : 1;
     }
 
     if (parser.isSet(preview)) {
-        auto *prompt = new UacPrompt(sampleInfo(parser.isSet(verified)), uacTheme, dim);
+        auto *prompt = new UacPrompt(sample, uacTheme, dim);
         UacCard *card = prompt->card();
-        card->setPrompt(QStringLiteral("Password:"), false);
+        if (!sample.consent)
+            card->setPrompt(QStringLiteral("Password:"), false);
         QObject::connect(card, &UacCard::accepted, card, [card, prompt](const QString &pw) {
             if (pw == QLatin1String("wrong")) {
                 card->clearPassword();
@@ -93,6 +107,7 @@ int main(int argc, char **argv)
             QCoreApplication::quit();
         });
         prompt->show();
+        UacSound::playPromptSound();
         return app.exec();
     }
 

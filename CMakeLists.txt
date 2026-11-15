@@ -25,6 +25,7 @@ message(STATUS "UACWin: building against Qt${UACWIN_QT}")
 
 add_executable(uacwin-agent
     src/main.cpp
+    src/sound.cpp
     src/agent.cpp
     src/appinfo.cpp
     src/uacprompt.cpp

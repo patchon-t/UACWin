@@ -288,12 +288,17 @@ UacCard::UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent)
     connect(m_detailsLink, &QLabel::linkActivated, this, [this] { setDetailsExpanded(!m_expanded); });
     bl->addWidget(m_detailsLink, 0, Qt::AlignLeft);
 
-    bl->addSpacing(18);
-    bl->addWidget(plainLabel(info.users.size() > 1
+    m_consent = info.consent;
+    m_creds = new QWidget(body);
+    auto *cl = new QVBoxLayout(m_creds);
+    cl->setContentsMargins(0, 0, 0, 0);
+    cl->setSpacing(4);
+    cl->addSpacing(18);
+    cl->addWidget(plainLabel(info.users.size() > 1
                                  ? QStringLiteral("To continue, choose an admin account and enter its password.")
                                  : QStringLiteral("To continue, enter an admin password."),
                              "detail", body));
-    bl->addSpacing(12);
+    cl->addSpacing(12);
 
     // User tile
     auto *tile = new QHBoxLayout;
@@ -325,7 +330,7 @@ UacCard::UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent)
         names->addWidget(m_userSub);
     }
     tile->addLayout(names, 1);
-    bl->addLayout(tile);
+    cl->addLayout(tile);
 
     if (!info.users.isEmpty()) {
         const UacUser &u = info.users.at(qBound(0, info.selectedUser, info.users.size() - 1));
@@ -341,7 +346,7 @@ UacCard::UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent)
             m_userName->setText(QStringLiteral("Administrator"));
     }
 
-    bl->addSpacing(12);
+    cl->addSpacing(12);
     m_password = new QLineEdit(body);
     m_password->setObjectName(QStringLiteral("password"));
     m_password->setEchoMode(QLineEdit::Password);
@@ -350,7 +355,10 @@ UacCard::UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent)
     m_password->setEnabled(false);
     connect(m_password, &QLineEdit::textChanged, this, &UacCard::updateYes);
     connect(m_password, &QLineEdit::returnPressed, this, &UacCard::submit);
-    bl->addWidget(m_password);
+    cl->addWidget(m_password);
+
+    m_creds->setVisible(!m_consent);
+    bl->addWidget(m_creds);
 
     m_message = plainLabel({}, "message", body);
     m_message->setVisible(false);
@@ -453,6 +461,18 @@ void UacCard::setPrompt(const QString &prompt, bool echo)
     focusInput();
 }
 
+void UacCard::requirePassword(const QString &prompt, bool echo)
+{
+    if (m_consent) {
+        m_consent = false;
+        m_creds->setVisible(true);
+        layout()->activate();
+        adjustSize();
+        Q_EMIT geometryHintChanged();
+    }
+    setPrompt(prompt, echo);
+}
+
 void UacCard::setError(const QString &text)
 {
     m_message->setStyleSheet(QStringLiteral("color: %1;").arg(css(m_theme.error)));
@@ -489,7 +509,9 @@ void UacCard::clearPassword()
 
 void UacCard::focusInput()
 {
-    if (m_password->isEnabled()) {
+    if (m_consent) {
+        m_no->setFocus(Qt::OtherFocusReason); // Enter alone never approves
+    } else if (m_password->isEnabled()) {
         m_password->setFocus(Qt::OtherFocusReason);
     } else {
         m_no->setFocus(Qt::OtherFocusReason);
@@ -513,16 +535,20 @@ void UacCard::shake()
 
 void UacCard::updateYes()
 {
-    m_yes->setEnabled(!m_busy && m_password->isEnabled() && !m_password->text().isEmpty());
+    if (m_consent)
+        m_yes->setEnabled(!m_busy);
+    else
+        m_yes->setEnabled(!m_busy && m_password->isEnabled() && !m_password->text().isEmpty());
 }
 
 void UacCard::submit()
 {
     if (!m_yes->isEnabled())
         return;
-    const QString response = m_password->text();
+    const QString response = m_consent ? QString() : m_password->text();
     setBusy(true);
-    setInfo(QStringLiteral("Checking…"));
+    if (!m_consent)
+        setInfo(QStringLiteral("Checking…"));
     Q_EMIT accepted(response);
 }
 
@@ -689,7 +715,8 @@ QImage UacPrompt::renderPreview(const UacInfo &info, const UacTheme &theme, cons
     scene->setPixmap(wallpaper);
     scene->resize(size);
     auto *card = new UacCard(info, theme, scene);
-    card->setPrompt(QStringLiteral("Password:"), false);
+    if (!info.consent)
+        card->setPrompt(QStringLiteral("Password:"), false);
     scene->show();
     card->layout()->activate();
     card->adjustSize();
