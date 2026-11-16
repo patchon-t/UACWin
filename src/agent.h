@@ -13,7 +13,7 @@ class UacAgent : public PolkitQt1::Agent::Listener
 {
     Q_OBJECT
 public:
-    UacAgent(const UacTheme &theme, bool dim, QObject *parent = nullptr);
+    UacAgent(const UacTheme &theme, UacBackdrop backdrop, QObject *parent = nullptr);
 
 public Q_SLOTS:
     void initiateAuthentication(const QString &actionId,
@@ -33,7 +33,7 @@ private:
     void finish();
 
     UacTheme m_theme;
-    bool m_dim = true;
+    UacBackdrop m_backdrop = UacBackdrop::Wallpaper;
 
     bool m_inProgress = false;
     int m_failures = 0;

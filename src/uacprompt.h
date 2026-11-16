@@ -13,7 +13,14 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QToolButton;
-class QVariantAnimation;
+
+// What is shown behind the prompt.
+enum class UacBackdrop {
+    Wallpaper, // your KDE wallpaper, blurred (default)
+    Dim,       // the current screen, darkened
+    None,      // nothing: just the prompt window
+};
+UacBackdrop parseBackdrop(const QString &name); // "wallpaper", "dim", "none"
 
 struct UacTheme {
     bool dark = true;
@@ -42,7 +49,7 @@ public:
     void setBusy(bool busy);
     void clearPassword();
     void focusInput();
-    void shake();
+    void reject() { Q_EMIT rejected(); }
     void setDetailsExpanded(bool expanded);
 
 Q_SIGNALS:
@@ -74,7 +81,6 @@ private:
     QLabel *m_message = nullptr;
     QPushButton *m_yes = nullptr;
     QPushButton *m_no = nullptr;
-    QVariantAnimation *m_shake = nullptr;
     bool m_busy = false;
     bool m_expanded = false;
     bool m_consent = false;
@@ -86,7 +92,7 @@ class UacPrompt : public QObject
 {
     Q_OBJECT
 public:
-    UacPrompt(const UacInfo &info, const UacTheme &theme, bool dim, QObject *parent = nullptr);
+    UacPrompt(const UacInfo &info, const UacTheme &theme, UacBackdrop backdrop, QObject *parent = nullptr);
     ~UacPrompt() override;
 
     UacCard *card() const { return m_card; }
