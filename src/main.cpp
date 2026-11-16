@@ -1,6 +1,7 @@
 #include "agent.h"
 #include "sound.h"
 #include "uacprompt.h"
+#include "wallpaper.h"
 
 #include <PolkitQt1/Subject>
 
@@ -8,6 +9,7 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
+#include <QScreen>
 
 #include <cstdio>
 #include <unistd.h>
@@ -60,15 +62,30 @@ int main(int argc, char **argv)
     QCommandLineOption theme(QStringLiteral("theme"), QStringLiteral("Force 'dark' or 'light' (default: follow KDE)."), QStringLiteral("name"));
     QCommandLineOption consent(QStringLiteral("consent"), QStringLiteral("With --preview/--grab: Yes/No only, no password box."));
     QCommandLineOption whichSound(QStringLiteral("which-sound"), QStringLiteral("Print the sound file the prompt would play and exit."));
-    QCommandLineOption noDim(QStringLiteral("no-dim"), QStringLiteral("Do not dim the screen behind the prompt."));
-    parser.addOptions({preview, verified, grab, theme, consent, whichSound, noDim});
+    QCommandLineOption backdrop(QStringLiteral("backdrop"), QStringLiteral("Behind the prompt: 'wallpaper' (blurred, default), 'dim' or 'none'."), QStringLiteral("mode"));
+    QCommandLineOption noDim(QStringLiteral("no-dim"), QStringLiteral("Same as --backdrop none."));
+    QCommandLineOption whichWallpaper(QStringLiteral("which-wallpaper"), QStringLiteral("Print the wallpaper file used for the backdrop and exit."));
+    parser.addOptions({preview, verified, grab, theme, consent, whichSound, backdrop, noDim, whichWallpaper});
     parser.process(app);
 
     QString themeName = parser.value(theme);
     if (themeName.isEmpty())
         themeName = QString::fromLocal8Bit(qgetenv("UACWIN_THEME"));
     const UacTheme uacTheme = UacTheme::detect(themeName);
-    const bool dim = !parser.isSet(noDim) && qgetenv("UACWIN_NO_DIM").isEmpty();
+    QString backdropName = parser.value(backdrop);
+    if (backdropName.isEmpty())
+        backdropName = qEnvironmentVariable("UACWIN_BACKDROP");
+    if (parser.isSet(noDim) || !qgetenv("UACWIN_NO_DIM").isEmpty())
+        backdropName = QStringLiteral("none");
+    const UacBackdrop uacBackdrop = parseBackdrop(backdropName);
+
+    if (parser.isSet(whichWallpaper)) {
+        QScreen *s = QGuiApplication::primaryScreen();
+        const QSize px = s ? s->geometry().size() * s->devicePixelRatio() : QSize(1920, 1080);
+        const QString f = UacWallpaper::desktopWallpaper(0, uacTheme.dark, px);
+        printf("%s\n", f.isEmpty() ? "(no wallpaper found, will dim the screen instead)" : qPrintable(f));
+        return 0;
+    }
 
     if (parser.isSet(whichSound)) {
         const QString f = UacSound::resolvePromptSound();
@@ -85,7 +102,7 @@ int main(int argc, char **argv)
     }
 
     if (parser.isSet(preview)) {
-        auto *prompt = new UacPrompt(sample, uacTheme, dim);
+        auto *prompt = new UacPrompt(sample, uacTheme, uacBackdrop);
         UacCard *card = prompt->card();
         if (!sample.consent)
             card->setPrompt(QStringLiteral("Password:"), false);
@@ -93,7 +110,6 @@ int main(int argc, char **argv)
             if (pw == QLatin1String("wrong")) {
                 card->clearPassword();
                 card->setError(QStringLiteral("The password is incorrect. Try again."));
-                card->shake();
                 card->setPrompt(QStringLiteral("Password:"), false);
                 return;
             }
@@ -111,7 +127,7 @@ int main(int argc, char **argv)
         return app.exec();
     }
 
-    UacAgent agent(uacTheme, dim);
+    UacAgent agent(uacTheme, uacBackdrop);
     PolkitQt1::UnixSessionSubject session(getpid());
     if (!agent.registerListener(session, QStringLiteral("/org/uacwin/PolicyKit1/AuthenticationAgent"))) {
         qCritical("uacwin: could not register as polkit agent. Is another agent "

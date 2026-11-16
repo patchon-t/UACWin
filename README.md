@@ -3,7 +3,7 @@
 A Windows UAC–style admin prompt for KDE Plasma on Linux.
 
 UACWin replaces KDE's polkit password dialog with a prompt modeled on Windows User Account Control:
-the screen dims, and a card asks *"Do you want to allow this app to make changes to your device?"*
+your wallpaper appears blurred behind it, and a card asks *"Do you want to allow this app to make changes to your device?"*
 with **Yes** / **No**.
 
 | Unknown publisher (dark) | Verified publisher (dark) | Light theme | Yes/No only (no password) |
@@ -12,7 +12,8 @@ with **Yes** / **No**.
 
 ## What it does
 
-- **Dims every monitor** and shows the prompt in the middle of the screen.
+- **Blurred wallpaper backdrop** on every monitor (your KDE desktop wallpaper, not the current screen),
+  with the prompt in the middle. It appears instantly, with no fade or pop-up animation.
 - **Amber header** for programs that no installed package owns (downloaded binaries, scripts, AppImages).
 - **Blue header with "Verified publisher"** for programs installed by your package manager
   (`dpkg`, `rpm` or `pacman`). The publisher is the package's maintainer or vendor.
@@ -22,7 +23,8 @@ with **Yes** / **No**.
 - Optional **Yes/No-only mode**: approve with one click and no password, like a Windows admin account (see below).
 - **Plays a sound** when the prompt opens, taken from your KDE sound theme (see below).
 - Follows KDE's light/dark theme and uses your KDE accent color for the Yes button and links.
-- Three wrong passwords cancel the request. Esc, ✕ or **No** cancel it immediately.
+- Three wrong passwords cancel the request. **No**, ✕, Esc, or **clicking anywhere outside the prompt** cancel it
+  immediately and close it.
 
 ## Install
 
@@ -131,7 +133,10 @@ If the prompt ever stops appearing, `sudo` in a terminal still works, so you can
 | Flag / env var | Effect |
 |---|---|
 | `--theme dark\|light` or `UACWIN_THEME=` | Force a theme instead of following KDE |
-| `--no-dim` or `UACWIN_NO_DIM=1` | Show only the card, without dimming the screen |
+| `--backdrop wallpaper\|dim\|none` or `UACWIN_BACKDROP=` | Behind the prompt: blurred wallpaper (default), the darkened current screen, or nothing |
+| `UACWIN_WALLPAPER=/path/to/image` | Use this picture for the backdrop instead of your desktop wallpaper |
+| `--which-wallpaper` | Print which wallpaper file the backdrop uses |
+| `--no-dim` or `UACWIN_NO_DIM=1` | Same as `--backdrop none` |
 | `UACWIN_SOUND=` | Sound to play: theme name, file path, or `none` |
 | `UACWIN_MODE=password` | Always show the password box, even when Yes/No-only mode is on |
 | `--preview --consent` | Preview the Yes/No-only prompt |
@@ -154,4 +159,8 @@ journalctl --user -u uacwin-agent -f
 - Windows draws UAC on a separate "secure desktop" that other apps can't see or click.
   UACWin is a normal window on your desktop. That is why the default mode asks for a password.
 - "Verified publisher" only means an installed package owns the file. Unlike Windows, it does not check a code signature.
+- The backdrop uses the wallpaper of Plasma's `org.kde.image` (picture) and `org.kde.slideshow` wallpaper types.
+  With a plain-colour or other wallpaper type, it falls back to the lock-screen wallpaper, then to darkening the screen.
+- If you still see a zoom/fade when the prompt opens, that comes from KWin's own window effects (System Settings →
+  Window Management → Desktop Effects → "Scale" / "Fade"), not from UACWin.
 - On Wayland, KWin decides which window gets focus. If the prompt opens without keyboard focus, click it.

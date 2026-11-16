@@ -1,4 +1,5 @@
 #include "uacprompt.h"
+#include "wallpaper.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -85,42 +86,36 @@ QLabel *plainLabel(const QString &text, const char *objectName, QWidget *parent)
     return l;
 }
 
-// Full-screen dim layer. One per monitor.
-class DimOverlay : public QWidget
+// Full-screen backdrop behind the prompt. One per monitor. Shows the blurred
+// wallpaper, or (without one) darkens the screen. Appears instantly.
+class BackdropWindow : public QWidget
 {
     Q_OBJECT
 public:
-    DimOverlay()
+    explicit BackdropWindow(const QPixmap &backdrop)
         : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
+        , m_backdrop(backdrop)
     {
-        setAttribute(Qt::WA_TranslucentBackground);
+        if (m_backdrop.isNull())
+            setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_NoSystemBackground);
         setWindowTitle(QStringLiteral("User Account Control"));
-        m_fade = new QVariantAnimation(this);
-        m_fade->setStartValue(0.0);
-        m_fade->setEndValue(1.0);
-        m_fade->setDuration(200);
-        m_fade->setEasingCurve(QEasingCurve::OutCubic);
-        connect(m_fade, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
-            m_level = v.toReal();
-            update();
-        });
     }
 
 Q_SIGNALS:
     void clickedOutside();
 
 protected:
-    void showEvent(QShowEvent *e) override
-    {
-        QWidget::showEvent(e);
-        m_fade->start();
-    }
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
-        p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.fillRect(rect(), QColor(0, 0, 0, qRound(150 * m_level)));
+        if (!m_backdrop.isNull()) {
+            p.setRenderHint(QPainter::SmoothPixmapTransform);
+            p.drawPixmap(rect(), m_backdrop);
+        } else {
+            p.setCompositionMode(QPainter::CompositionMode_Source);
+            p.fillRect(rect(), QColor(0, 0, 0, 150));
+        }
     }
     void mousePressEvent(QMouseEvent *e) override
     {
@@ -129,8 +124,7 @@ protected:
     }
 
 private:
-    QVariantAnimation *m_fade = nullptr;
-    qreal m_level = 0.0;
+    QPixmap m_backdrop;
 };
 
 } // namespace
@@ -138,6 +132,15 @@ private:
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
+
+UacBackdrop parseBackdrop(const QString &name)
+{
+    if (name == QLatin1String("dim"))
+        return UacBackdrop::Dim;
+    if (name == QLatin1String("none"))
+        return UacBackdrop::None;
+    return UacBackdrop::Wallpaper;
+}
 
 UacTheme UacTheme::detect(const QString &override)
 {
@@ -426,11 +429,6 @@ UacCard::UacCard(const UacInfo &info, const UacTheme &theme, QWidget *parent)
                       .arg(css(theme.neutralBtnText), css(theme.dark ? theme.neutralBtn.lighter(125)
                                                                        : theme.neutralBtn.darker(106))));
 
-    m_shake = new QVariantAnimation(this);
-    m_shake->setStartValue(0.0);
-    m_shake->setEndValue(1.0);
-    m_shake->setDuration(420);
-
     setDetailsExpanded(false);
     updateYes();
 }
@@ -518,21 +516,6 @@ void UacCard::focusInput()
     }
 }
 
-void UacCard::shake()
-{
-    if (!parentWidget() || m_shake->state() == QAbstractAnimation::Running)
-        return;
-    const QPoint base = pos();
-    m_shake->disconnect(this);
-    connect(m_shake, &QVariantAnimation::valueChanged, this, [this, base](const QVariant &v) {
-        const qreal t = v.toReal();
-        move(base + QPoint(qRound(qSin(t * M_PI * 6) * (1.0 - t) * 12), 0));
-    });
-    connect(m_shake, &QVariantAnimation::finished, this, [this, base] { move(base); });
-    m_shake->start();
-    QApplication::beep();
-}
-
 void UacCard::updateYes()
 {
     if (m_consent)
@@ -585,18 +568,30 @@ void UacCard::keyPressEvent(QKeyEvent *event)
 // Prompt (overlays + card)
 // ---------------------------------------------------------------------------
 
-UacPrompt::UacPrompt(const UacInfo &info, const UacTheme &theme, bool dim, QObject *parent)
+UacPrompt::UacPrompt(const UacInfo &info, const UacTheme &theme, UacBackdrop backdrop, QObject *parent)
     : QObject(parent)
-    , m_dim(dim)
+    , m_dim(backdrop != UacBackdrop::None)
 {
-    if (dim) {
+    if (m_dim) {
         QScreen *hostScreen = QGuiApplication::screenAt(QCursor::pos());
         if (!hostScreen)
             hostScreen = QGuiApplication::primaryScreen();
 
         const auto screens = QGuiApplication::screens();
+        int plasmaIndex = 1; // Plasma numbers the primary screen 0, the others after it
         for (QScreen *screen : screens) {
-            auto *overlay = new DimOverlay;
+            QPixmap pm;
+            if (backdrop == UacBackdrop::Wallpaper) {
+                const qreal dpr = screen->devicePixelRatio();
+                const QSize px = screen->geometry().size() * dpr;
+                const int index = screen == QGuiApplication::primaryScreen() ? 0 : plasmaIndex++;
+                const QString file = UacWallpaper::desktopWallpaper(index, theme.dark, px);
+                if (!file.isEmpty()) {
+                    pm = QPixmap::fromImage(UacWallpaper::blurredFile(file, px));
+                    pm.setDevicePixelRatio(dpr);
+                }
+            }
+            auto *overlay = new BackdropWindow(pm);
             overlay->setGeometry(screen->geometry());
             overlay->setProperty("uacScreen", QVariant::fromValue<void *>(screen));
             m_overlays << overlay;
@@ -607,13 +602,10 @@ UacPrompt::UacPrompt(const UacInfo &info, const UacTheme &theme, bool dim, QObje
         m_host->installEventFilter(this);
         connect(m_card, &UacCard::geometryHintChanged, this, &UacPrompt::recenter);
         for (const auto &o : qAsConst(m_overlays)) {
-            connect(static_cast<DimOverlay *>(o.data()), &DimOverlay::clickedOutside, this, [this] {
-                if (m_host) {
-                    m_host->raise();
-                    m_host->activateWindow();
-                }
-                m_card->shake();
-                m_card->focusInput();
+            // Clicking outside the prompt means "No", like closing it.
+            connect(static_cast<BackdropWindow *>(o.data()), &BackdropWindow::clickedOutside, this, [this] {
+                if (m_card)
+                    m_card->reject();
             });
         }
     } else {
@@ -691,25 +683,24 @@ void UacPrompt::recenter()
 
 QImage UacPrompt::renderPreview(const UacInfo &info, const UacTheme &theme, const QSize &size)
 {
-    // Sample "wallpaper" so the screenshot looks like a real desktop.
-    QPixmap wallpaper(size);
+    // Sample "wallpaper" (sharp shapes), blurred the same way as the real one.
+    QImage sharp(size, QImage::Format_RGB32);
     {
-        QPainter p(&wallpaper);
+        QPainter p(&sharp);
         p.setRenderHint(QPainter::Antialiasing);
         QLinearGradient bg(0, 0, size.width(), size.height());
-        bg.setColorAt(0, QColor(0x0b, 0x1a, 0x3a));
-        bg.setColorAt(1, QColor(0x14, 0x0f, 0x2e));
-        p.fillRect(wallpaper.rect(), bg);
-        QRadialGradient glow(size.width() * 0.3, size.height() * 0.75, size.width() * 0.6);
-        glow.setColorAt(0, QColor(0x3d, 0xae, 0xe9, 170));
-        glow.setColorAt(1, QColor(0x3d, 0xae, 0xe9, 0));
-        p.fillRect(wallpaper.rect(), glow);
-        QRadialGradient glow2(size.width() * 0.8, size.height() * 0.2, size.width() * 0.45);
-        glow2.setColorAt(0, QColor(0x8e, 0x44, 0xad, 140));
-        glow2.setColorAt(1, QColor(0x8e, 0x44, 0xad, 0));
-        p.fillRect(wallpaper.rect(), glow2);
-        p.fillRect(wallpaper.rect(), QColor(0, 0, 0, 150)); // the dim layer
+        bg.setColorAt(0, QColor(0x10, 0x3a, 0x6e));
+        bg.setColorAt(1, QColor(0x2a, 0x12, 0x4a));
+        p.fillRect(sharp.rect(), bg);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x3d, 0xae, 0xe9));
+        p.drawEllipse(QPointF(size.width() * 0.22, size.height() * 0.7), size.width() * 0.2, size.width() * 0.2);
+        p.setBrush(QColor(0xe9, 0x5d, 0x9b));
+        p.drawEllipse(QPointF(size.width() * 0.8, size.height() * 0.25), size.width() * 0.16, size.width() * 0.16);
+        p.setBrush(QColor(0xf6, 0xc3, 0x43));
+        p.drawEllipse(QPointF(size.width() * 0.62, size.height() * 0.85), size.width() * 0.1, size.width() * 0.1);
     }
+    const QPixmap wallpaper = QPixmap::fromImage(UacWallpaper::blur(sharp, size));
 
     auto *scene = new QLabel;
     scene->setPixmap(wallpaper);

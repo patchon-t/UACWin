@@ -52,10 +52,10 @@ QString currentUserName()
 
 } // namespace
 
-UacAgent::UacAgent(const UacTheme &theme, bool dim, QObject *parent)
+UacAgent::UacAgent(const UacTheme &theme, UacBackdrop backdrop, QObject *parent)
     : PolkitQt1::Agent::Listener(parent)
     , m_theme(theme)
-    , m_dim(dim)
+    , m_backdrop(backdrop)
 {
 }
 
@@ -112,7 +112,7 @@ void UacAgent::initiateAuthentication(const QString &actionId,
         return;
     }
 
-    m_prompt = new UacPrompt(info, m_theme, m_dim, this);
+    m_prompt = new UacPrompt(info, m_theme, m_backdrop, this);
     UacCard *card = m_prompt->card();
 
     connect(card, &UacCard::accepted, this, [this](const QString &response) {
@@ -211,14 +211,12 @@ void UacAgent::onCompleted(bool gainedAuthorization)
         UacCard *card = m_prompt->card();
         card->setError(QStringLiteral("Your account is not allowed to approve this."));
         card->setBusy(false);
-        card->shake();
         return; // clicking Yes again retries
     }
     if (m_prompt) {
         UacCard *card = m_prompt->card();
         card->clearPassword();
         card->setError(QStringLiteral("The password is incorrect. Try again."));
-        card->shake();
     }
     startSession();
 }
